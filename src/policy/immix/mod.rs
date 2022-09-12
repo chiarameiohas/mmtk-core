@@ -20,7 +20,8 @@ pub const DEFRAG: bool = true;
 
 /// Mark lines when scanning objects.
 /// Otherwise, do it at mark time.
-pub const MARK_LINE_AT_SCAN_TIME: bool = true;
+/// chiara: we might want to consider this option
+//pub const MARK_LINE_AT_SCAN_TIME: bool = *crate::args::MARK_LINE_AT_SCAN_TIME;
 
 macro_rules! validate {
     ($x: expr) => { assert!($x, stringify!($x)) };

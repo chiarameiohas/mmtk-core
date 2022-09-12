@@ -443,7 +443,7 @@ pub trait ProcessEdgesWork:
     #[inline(always)]
     fn create_scan_work(&self, nodes: Vec<ObjectReference>) -> Box<dyn GCWork<Self::VM>> {
         Box::new(crate::scheduler::gc_work::ScanObjects::<Self>::new(
-            nodes, false,
+            nodes, false, WorkBucketStage::Closure,
         ))
     }
 
@@ -585,14 +585,16 @@ pub struct ScanObjects<Edges: ProcessEdgesWork> {
     #[allow(unused)]
     concurrent: bool,
     phantom: PhantomData<Edges>,
+    destination_bucket: WorkBucketStage,
 }
 
 impl<Edges: ProcessEdgesWork> ScanObjects<Edges> {
-    pub fn new(buffer: Vec<ObjectReference>, concurrent: bool) -> Self {
+    pub fn new(buffer: Vec<ObjectReference>, concurrent: bool, bucket: WorkBucketStage) -> Self {
         Self {
             buffer,
             concurrent,
             phantom: PhantomData,
+            destination_bucket: bucket,
         }
     }
 }
@@ -602,7 +604,7 @@ impl<E: ProcessEdgesWork> GCWork<E::VM> for ScanObjects<E> {
         trace!("ScanObjects");
         {
             let tls = worker.tls;
-            let mut closure = ObjectsClosure::<E>::new(worker);
+            let mut closure = ObjectsClosure::<E>::new(worker, self.destination_bucket);
             <E::VM as VMBinding>::VMScanning::scan_objects(tls, &self.buffer, &mut closure);
         }
         trace!("ScanObjects End");
@@ -637,7 +639,7 @@ impl<E: ProcessEdgesWork> GCWork<E::VM> for ProcessModBuf<E> {
             if !self.modbuf.is_empty() {
                 let mut modbuf = vec![];
                 ::std::mem::swap(&mut modbuf, &mut self.modbuf);
-                GCWork::do_work(&mut ScanObjects::<E>::new(modbuf, false), worker, mmtk)
+                GCWork::do_work(&mut ScanObjects::<E>::new(modbuf, false, WorkBucketStage::Closure), worker, mmtk)
             }
         } else {
             // Do nothing
@@ -746,7 +748,7 @@ impl<E: ProcessEdgesWork, P: Plan<VM = E::VM> + PlanTraceObject<E::VM>> GCWork<E
         trace!("PlanScanObjects");
         {
             let tls = worker.tls;
-            let mut closure = ObjectsClosure::<E>::new(worker);
+            let mut closure = ObjectsClosure::<E>::new(worker, WorkBucketStage::Closure);
             for object in &self.buffer {
                 <E::VM as VMBinding>::VMScanning::scan_object(tls, *object, &mut closure);
                 self.plan.post_scan_object(*object);

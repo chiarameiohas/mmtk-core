@@ -33,17 +33,19 @@ enum-map = "=2.1"
 downcast-rs = "1.1.1"
 atomic-traits = "0.2.0"
 atomic = "0.4.6"
-spin = "0.5.2"
 env_logger = "0.8.2"
 pfm = { version = "0.1.0-beta.1", optional = true }
 atomic_refcell = "0.1.7"
 strum = "0.24"
 strum_macros = "0.24"
+spin = "0.9.4"
 
 [dev-dependencies]
 rand = "0.7.3"
 
 [features]
+#default = ["sanity"]
+#default = ["work_packet_stats"]
 default = []
 
 # This feature is only supported on x86-64 for now

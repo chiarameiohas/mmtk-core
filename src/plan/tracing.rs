@@ -65,13 +65,15 @@ impl ObjectQueue for VectorObjectQueue {
 pub struct ObjectsClosure<'a, E: ProcessEdgesWork> {
     buffer: Vec<Address>,
     worker: &'a mut GCWorker<E::VM>,
+    destination_bucket: WorkBucketStage,
 }
 
 impl<'a, E: ProcessEdgesWork> ObjectsClosure<'a, E> {
-    pub fn new(worker: &'a mut GCWorker<E::VM>) -> Self {
+    pub fn new(worker: &'a mut GCWorker<E::VM>, bucket: WorkBucketStage) -> Self {
         Self {
             buffer: vec![],
             worker,
+            destination_bucket: bucket,
         }
     }
 
@@ -79,7 +81,7 @@ impl<'a, E: ProcessEdgesWork> ObjectsClosure<'a, E> {
         let mut new_edges = Vec::new();
         mem::swap(&mut new_edges, &mut self.buffer);
         self.worker.add_work(
-            WorkBucketStage::Closure,
+            self.destination_bucket,
             E::new(new_edges, false, self.worker.mmtk),
         );
     }
@@ -96,7 +98,7 @@ impl<'a, E: ProcessEdgesWork> EdgeVisitor for ObjectsClosure<'a, E> {
             let mut new_edges = Vec::new();
             mem::swap(&mut new_edges, &mut self.buffer);
             self.worker.add_work(
-                WorkBucketStage::Closure,
+                self.destination_bucket,
                 E::new(new_edges, false, self.worker.mmtk),
             );
         }

@@ -9,6 +9,14 @@ use crate::util::Address;
 use crate::vm::*;
 use spin::{Mutex, MutexGuard};
 use std::sync::atomic::Ordering;
+use libc::pathconf;
+
+use crate::scheduler::GCWorker;
+use crate::MMTK;
+use crate::policy::gc_work::TraceKind;
+use crate::util::metadata::MetadataSpec;
+use crate::util::{alloc_bit};
+
 
 /// The block allocation state.
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -248,6 +256,28 @@ impl Block {
             let mut prev_line_is_marked = true;
             let line_mark_state = line_mark_state.unwrap();
 
+            #[cfg(feature = "global_alloc_bit")]
+            {
+                let mut address = self.start();
+                let block_end = address + Block::BYTES;
+                // solution 3: copy mark array to alloc bit array
+                let bulk_load_size: usize =
+                    128 * (1 << crate::util::alloc_bit::ALLOC_SIDE_METADATA_SPEC.log_bytes_in_region);
+                if let MetadataSpec::OnSide(local_mark_bit_side_spec) = *VM::VMObjectModel::LOCAL_MARK_BIT_SPEC {
+                    debug_assert!(crate::util::alloc_bit::ALLOC_SIDE_METADATA_SPEC.log_bytes_in_region == local_mark_bit_side_spec.log_bytes_in_region);
+                    debug_assert!(crate::util::alloc_bit::ALLOC_SIDE_METADATA_SPEC.log_num_of_bits== local_mark_bit_side_spec.log_num_of_bits);
+                    let mut mark_128: u128 = 0;
+                    while address < block_end {
+                        mark_128 = unsafe { Block::load128(&local_mark_bit_side_spec, address) };
+                        unsafe { Block::store128(&crate::util::alloc_bit::ALLOC_SIDE_METADATA_SPEC, address, mark_128) };
+                        address += bulk_load_size;
+                    }
+                } else {
+                    panic!("mark bit is not on side!");
+                }
+                debug_assert!(address == block_end, "address is not block end");
+            } // #[cfg(feature = "global_alloc_bit")]
+
             for line in self.lines() {
                 if line.is_marked(line_mark_state) {
                     marked_lines += 1;
@@ -284,7 +314,27 @@ impl Block {
             }
         }
     }
+
+    #[inline(always)]
+    pub unsafe fn load128(metadata_spec: &SideMetadataSpec, data_addr: Address) -> u128 {
+        let meta_addr = side_metadata::address_to_meta_address(metadata_spec, data_addr);
+        if cfg!(debug_assertions) {
+            side_metadata::ensure_metadata_is_mapped(metadata_spec, data_addr);
+        }
+        let data = meta_addr.load::<u128>() as u128;
+        return data;
+    }
+
+    #[inline(always)]
+    pub unsafe fn store128(metadata_spec: &SideMetadataSpec, data_addr: Address, value: u128) {
+        let meta_addr = side_metadata::address_to_meta_address(metadata_spec, data_addr);
+        if cfg!(debug_assertions) {
+            side_metadata::ensure_metadata_is_mapped(metadata_spec, data_addr);
+        }
+        meta_addr.store::<u128>(value);
+    }
 }
+
 
 /// A non-block single-linked list to store blocks.
 #[derive(Default)]

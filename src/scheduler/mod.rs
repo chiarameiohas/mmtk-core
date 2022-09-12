@@ -13,7 +13,7 @@ pub use work::CoordinatorWork;
 pub use work::GCWork;
 pub(crate) use work::GCWorkContext;
 
-mod work_bucket;
+pub mod work_bucket;
 pub use work_bucket::WorkBucketStage;
 
 mod worker;

@@ -18,6 +18,8 @@ use crate::util::metadata::side_metadata::{self, *};
 use crate::util::metadata::{
     self, compare_exchange_metadata, load_metadata, store_metadata, MetadataSpec,
 };
+
+use crate::util::alloc_bit;
 use crate::util::object_forwarding as ForwardingWord;
 use crate::util::{Address, ObjectReference};
 use crate::vm::*;
@@ -26,15 +28,20 @@ use crate::{
     scheduler::{GCWork, GCWorkScheduler, GCWorker, WorkBucketStage},
     util::{
         heap::FreeListPageResource,
+
         opaque_pointer::{VMThread, VMWorkerThread},
     },
     MMTK,
 };
 use atomic::Ordering;
 use std::sync::{atomic::AtomicU8, Arc};
+use crate::util::alloc_bit::is_alloced;
 
-pub(crate) const TRACE_KIND_FAST: TraceKind = 0;
-pub(crate) const TRACE_KIND_DEFRAG: TraceKind = 1;
+pub const TRACE_KIND_FAST: TraceKind = 0;
+pub const TRACE_KIND_DEFRAG: TraceKind = 1;
+pub const TRACE_KIND_SS_FAST: TraceKind = 2;
+
+
 
 pub struct ImmixSpace<VM: VMBinding> {
     common: CommonSpace<VM>,
@@ -125,18 +132,21 @@ impl<VM: VMBinding> crate::policy::gc_work::PolicyTraceObject<VM> for ImmixSpace
         copy: Option<CopySemantics>,
         worker: &mut GCWorker<VM>,
     ) -> ObjectReference {
-        if KIND == TRACE_KIND_DEFRAG {
-            self.trace_object(queue, object, copy.unwrap(), worker)
-        } else if KIND == TRACE_KIND_FAST {
-            self.fast_trace_object(queue, object)
-        } else {
-            unreachable!()
+        match KIND {
+            TRACE_KIND_DEFRAG => self.trace_object(queue, object, copy.unwrap(), worker),
+            TRACE_KIND_FAST => self.fast_trace_object(queue, object),
+            TRACE_KIND_SS_FAST => {
+                debug_assert!(is_alloced(object), "fast ss object {} is not alloced\r", object);
+                self.attempt_mark(object, self.mark_state);
+                object
+            },
+            _ => unreachable!(),
         }
     }
 
     #[inline(always)]
     fn post_scan_object(&self, object: ObjectReference) {
-        if super::MARK_LINE_AT_SCAN_TIME && !super::BLOCK_ONLY {
+        if *crate::args::MARK_LINE_AT_SCAN_TIME && !super::BLOCK_ONLY {
             debug_assert!(self.in_space(object));
             self.mark_lines(object);
         }
@@ -144,12 +154,11 @@ impl<VM: VMBinding> crate::policy::gc_work::PolicyTraceObject<VM> for ImmixSpace
 
     #[inline(always)]
     fn may_move_objects<const KIND: TraceKind>() -> bool {
-        if KIND == TRACE_KIND_DEFRAG {
-            true
-        } else if KIND == TRACE_KIND_FAST {
-            false
-        } else {
-            unreachable!()
+        match KIND {
+            TRACE_KIND_DEFRAG => true,
+            TRACE_KIND_FAST => false,
+            TRACE_KIND_SS_FAST => false,
+            _ => unreachable!(),
         }
     }
 }
@@ -382,12 +391,12 @@ impl<VM: VMBinding> ImmixSpace<VM> {
         semantics: CopySemantics,
         worker: &mut GCWorker<VM>,
     ) -> ObjectReference {
-        #[cfg(feature = "global_alloc_bit")]
-        debug_assert!(
-            crate::util::alloc_bit::is_alloced(object),
-            "{:x}: alloc bit not set",
-            object
-        );
+        // #[cfg(feature = "global_alloc_bit")]
+        // debug_assert!(
+        //     crate::util::alloc_bit::is_alloced(object),
+        //     "{:x}: alloc bit not set",
+        //     object
+        // );
         if Block::containing::<VM>(object).is_defrag_source() {
             debug_assert!(self.in_defrag());
             self.trace_object_with_opportunistic_copy(trace, object, semantics, worker)
@@ -406,7 +415,7 @@ impl<VM: VMBinding> ImmixSpace<VM> {
         if self.attempt_mark(object, self.mark_state) {
             // Mark block and lines
             if !super::BLOCK_ONLY {
-                if !super::MARK_LINE_AT_SCAN_TIME {
+                if !*crate::args::MARK_LINE_AT_SCAN_TIME {
                     self.mark_lines(object);
                 }
             } else {
@@ -474,18 +483,22 @@ impl<VM: VMBinding> ImmixSpace<VM> {
                 self.attempt_mark(object, self.mark_state);
                 ForwardingWord::clear_forwarding_bits::<VM>(object);
                 Block::containing::<VM>(object).set_state(BlockState::Marked);
+
                 object
             } else {
                 #[cfg(feature = "global_alloc_bit")]
                 crate::util::alloc_bit::unset_alloc_bit(object);
                 ForwardingWord::forward_object::<VM>(object, semantics, copy_context)
             };
+
             debug_assert_eq!(
                 Block::containing::<VM>(new_object).get_state(),
                 BlockState::Marked
             );
             queue.enqueue(new_object);
+
             debug_assert!(new_object.is_live());
+            debug_assert!(is_alloced(new_object));
             new_object
         }
     }
@@ -690,7 +703,7 @@ impl<VM: VMBinding> PolicyCopyContext for ImmixCopyContext<VM> {
             Some(Ordering::SeqCst),
         );
         // Mark the line
-        if !super::MARK_LINE_AT_SCAN_TIME {
+        if !*crate::args::MARK_LINE_AT_SCAN_TIME {
             self.get_space().mark_lines(obj);
         }
     }
