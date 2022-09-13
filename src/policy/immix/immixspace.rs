@@ -36,6 +36,7 @@ use crate::{
 use atomic::Ordering;
 use std::sync::{atomic::AtomicU8, Arc};
 use crate::util::alloc_bit::is_alloced;
+use crate::policy::immix::MARK_LINE_AT_SCAN_TIME;
 
 pub const TRACE_KIND_FAST: TraceKind = 0;
 pub const TRACE_KIND_DEFRAG: TraceKind = 1;
@@ -146,7 +147,7 @@ impl<VM: VMBinding> crate::policy::gc_work::PolicyTraceObject<VM> for ImmixSpace
 
     #[inline(always)]
     fn post_scan_object(&self, object: ObjectReference) {
-        if *crate::args::MARK_LINE_AT_SCAN_TIME && !super::BLOCK_ONLY {
+        if MARK_LINE_AT_SCAN_TIME && !super::BLOCK_ONLY {
             debug_assert!(self.in_space(object));
             self.mark_lines(object);
         }
@@ -415,7 +416,7 @@ impl<VM: VMBinding> ImmixSpace<VM> {
         if self.attempt_mark(object, self.mark_state) {
             // Mark block and lines
             if !super::BLOCK_ONLY {
-                if !*crate::args::MARK_LINE_AT_SCAN_TIME {
+                if !MARK_LINE_AT_SCAN_TIME {
                     self.mark_lines(object);
                 }
             } else {
@@ -703,7 +704,7 @@ impl<VM: VMBinding> PolicyCopyContext for ImmixCopyContext<VM> {
             Some(Ordering::SeqCst),
         );
         // Mark the line
-        if !*crate::args::MARK_LINE_AT_SCAN_TIME {
+        if !MARK_LINE_AT_SCAN_TIME {
             self.get_space().mark_lines(obj);
         }
     }

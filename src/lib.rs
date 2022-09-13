@@ -56,7 +56,6 @@ pub mod plan;
 pub mod scheduler;
 pub mod util;
 pub mod vm;
-pub mod args;
 
 pub use crate::plan::{
     AllocationSemantics, BarrierSelector, Mutator, MutatorContext, ObjectQueue, Plan,
